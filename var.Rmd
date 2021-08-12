@@ -1,0 +1,135 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+```{r}
+# install.packages('vars')
+library(vars)
+```
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Ctrl+Alt+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Ctrl+Shift+K* to preview the HTML file).
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+```{r}
+dat1 <- read.csv(file = "AirQualityUCI.csv", sep = ';', stringsAsFactors = FALSE)
+dat1 <- dat1[,1:(ncol(dat1)-2)]
+dat1 <- dat1[rowSums(is.na(dat1)) == 0,]
+head(dat1)
+str(dat1)
+```
+```{r}
+dat1$CO.GT. <- gsub(',', '.', dat1$CO.GT.)
+dat1$CO.GT. <- as.numeric(dat1$CO.GT.)
+
+dat1$C6H6.GT. <- gsub(',', '.', dat1$C6H6.GT.)
+dat1$C6H6.GT. <- as.numeric(dat1$C6H6.GT.)
+
+dat1$T <- gsub(',', '.', dat1$T)
+dat1$T <- as.numeric(dat1$T)
+
+dat1$RH <- gsub(',', '.', dat1$RH)
+dat1$RH <- as.numeric(dat1$RH)
+
+dat1$AH <- gsub(',', '.', dat1$AH)
+dat1$AH <- as.numeric(dat1$AH)
+str(dat1)
+```
+
+```{r}
+dat1['Date_Time'] <- as.POSIXct(paste(dat1$Date, dat1$Time), format="%d/%m/%Y %H.%M.%S")
+dat1 <- dat1[, 3:ncol(dat1)]
+rownames(dat1) <- dat1$Date_Time
+str(dat1)
+```
+```{r}
+dat1 <- dat1[, 1:(ncol(dat1)-1)]
+head(dat1)
+```
+```{r}
+for(j in 1:ncol(dat1))
+{
+  for (i in 2:nrow(dat1))
+  {
+    if(dat1[i,j] == -200)
+    {
+      dat1[i,j] = dat1[i-1,j]
+    }
+  }
+}
+```
+
+```{r}
+# install.packages('forecast')
+library(forecast)
+```
+
+```{r}
+dat1 <- within(dat1, rm(NMHC.GT.))
+dat1 <- as.data.frame(scale(dat1))
+str(dat1)
+```
+
+```{r}
+split <- floor(0.9*(nrow(dat1)))
+train <- dat1[1:split,]
+val <- dat1[split:nrow(dat1),]
+str(train)
+```
+```{r}
+var_res <- VAR(train, p = 20, type = 'const', season = (24*3))
+```
+
+```{r}
+summary(var_res)
+```
+
+```{r}
+forecast <- predict(var_res, n.ahead = 937, ci = 0.95)
+# str(forecast)
+```
+
+```{r}
+val['Date_Time'] <- rownames(val)
+val$Date_Time <- as.POSIXct(val$Date_Time)
+head(val)
+```
+```{r}
+# Sample Result
+temp <- forecast$fcst$AH[,1]
+temp <- as.data.frame(temp)
+temp['Date_Time'] <- as.POSIXct(val$Date_Time)
+str(temp)
+```
+
+```{r}
+library(ggplot2)
+
+ggplot()+geom_line(data = val, aes(x = Date_Time, y = AH),color = "#00AFBB", size = 2)+geom_line(data = temp, aes(x = Date_Time, y = temp),color = "red", size = 2)
+
+# line(forecast$fcst$CO.GT.$)
+```
+
+```{r}
+RMSE = function(m, o){
+  sqrt(mean((m - o)^2))
+}
+```
+
+```{r}
+cat("CO.GT. :",RMSE(forecast$fcst$CO.GT.[1],val$CO.GT.), "\n")
+cat("PT08.S1.CO. :",RMSE(forecast$fcst$PT08.S1.CO.[1],val$PT08.S1.CO.), "\n")
+cat("C6H6.GT. :",RMSE(forecast$fcst$C6H6.GT.[1],val$C6H6.GT.), "\n")
+cat("PT08.S2.NMHC. :",RMSE(forecast$fcst$PT08.S2.NMHC.[1],val$PT08.S2.NMHC.), "\n")
+cat("NOx.GT. :",RMSE(forecast$fcst$NOx.GT.[1],val$NOx.GT.), "\n")
+cat("PT08.S3.NOx. :",RMSE(forecast$fcst$PT08.S3.NOx.[1],val$PT08.S3.NOx.), "\n")
+cat("NO2.GT. :",RMSE(forecast$fcst$NO2.GT.[1],val$NO2.GT.), "\n")
+cat("PT08.S4.NO2. :",RMSE(forecast$fcst$PT08.S4.NO2.[1],val$PT08.S4.NO2.), "\n")
+cat("PT08.S5.O3. :",RMSE(forecast$fcst$PT08.S5.O3.[1],val$PT08.S5.O3.), "\n")
+cat("T :",RMSE(forecast$fcst$T[1],val$T), "\n")
+cat("RH :",RMSE(forecast$fcst$RH[1],val$RH), "\n")
+cat("AH :",RMSE(forecast$fcst$AH[1],val$AH), "\n")
+```
+

@@ -1,0 +1,232 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(fpp2)
+library(gridExtra)
+library(grid)
+library(quantmod)
+library(RCurl)
+library(dtwclust)
+library(dtw)
+library(stargazer)
+library(dplyr)
+library(sqldf)
+```
+
+```{r}
+download = getURL("https://raw.githubusercontent.com/datasets/s-and-p-500-companies/master/data/constituents.csv")
+SP500 = read.csv(text=download)
+head(SP500)
+SP500 = SP500[-which(SP500$Symbol %in% c("BRK.B","MON","UA","WELL","APC","AET","BHGE","ANDV","BBT","BF.B")),]
+```
+```{r}
+# Acquire stock price information with quantmod package
+stock_price = list()
+stock_name = NULL
+i = 0;
+for(ticker in SP500$Symbol){
+  if(i == 50)
+    break
+  print(ticker)
+  stock = getSymbols(ticker,src='yahoo',from = '2015-01-01',to = '2018-01-01', auto.assign = F)[,1:4]
+  stock_price = c(stock_price,list(stock))
+  stock_name = c(stock_name,ticker)
+  # Sys.sleep(2)
+  i = i + 1
+}
+names(stock_price) = stock_name
+```
+```{r}
+str(stock_price)
+```
+
+```{r}
+normalized = function(x){
+  m = mean(x)
+  s = sd(x)
+  n = (x-m)/s
+  return(n)
+}
+normalized_price = lapply(stock_price,function(x) normalized(x))
+```
+
+```{r}
+ex <- as.data.frame(normalized_price[1])
+str(ex)
+```
+
+```{r}
+Final = vector("list", 50)
+for(i in seq(length(normalized_price)))
+{
+  d = as.data.frame(normalized_price[i])
+  names(d) = c("Open","High","Low","Close")
+  Final = rbind(Final,d)
+}
+li <- split(Final, seq(nrow(Final)-1) %/% 755)
+str(li)
+```
+
+```{r}
+
+DTWDistance_dat <- function(s1, s2,w)
+{
+    DTW<-matrix(Inf, nrow = nrow(s1)+1, ncol = nrow(s2)+1)
+    w<-max(w, abs(nrow(s1)-nrow(s2)))
+    DTW[1,1] <- 0
+    for(i in 2:(nrow(s1)+1))
+    {
+      for(j in max(2, i-w): min(nrow(s2)+1, i+w))
+      {
+        dist <- 0
+        for(k in 1:ncol(s1))
+        {
+          dist <- dist + (s1[i,k]-s2[j,k])**2
+        }
+        DTW[i , j] <- dist + min( DTW[i-1, j] , DTW[ i, j-1] , DTW[i-1,j-1] )
+      }
+            
+    }
+    return (sqrt(DTW[nrow(s1), nrow(s2)]))
+}
+
+delta <- function(oldMeans, newMeans)
+{
+	a <- newMeans - oldMeans
+	max(euclid(a[, 1], a[, 2]))
+}
+
+Clustering <- function(m, means)
+{
+  clusters = c()
+  n <- length(m)
+  for(i in 1:n)
+  {
+    distances = c()
+    k <- length(means)
+    for(j in 1:k)
+    {
+    	ds <- DTWDistance_dat(as.data.frame(m[i]), as.data.frame(means[j]),4)
+    	distances <- c(distances, ds)
+    }
+    minDist <- min(distances)
+    cl <- match(minDist, distances)
+    clusters <- c(clusters, cl)    
+  }
+  return (clusters)
+}
+
+CalcMean <- function(m)
+{
+  ans <- as.data.frame(m[1])
+  if(length(m) > 1)
+  {
+    for(i in 2:length(m))
+    {
+      ans = ans + as.data.frame(m[i])
+    }  
+  }
+  ans <- ans / length(m)
+  ans <- list(ans)
+  return(ans)
+}
+
+UpdateMeans <- function(m, cl, k)
+{
+ means <- c()
+ for(c in 1:k)
+ {
+    group <- which(cl == c)
+    
+    tmean <- CalcMean(m[group])
+    means <- c(means, tmean)
+ }
+ return(means)
+}
+```
+
+```{r}
+myKmeans <- function(m, k, iter)
+{
+d = NULL
+for(i in 1:k)
+    d <-  c(d, m[i])
+
+print(1)
+oldMeans <- d
+oldMeans 
+cl <- Clustering(m, oldMeans)
+cl
+means <- UpdateMeans(m, cl, k)
+
+# thr <- delta(oldMeans, means)
+itr <- 1
+while(TRUE)
+{
+  if(itr == iter)
+    break
+  itr <- itr+1
+  print(itr)
+  cl <- Clustering(m, means)
+  oldMeans <- means
+  means <- UpdateMeans(m, cl, k)
+  # thr <- delta(oldMeans, means)
+}
+noOfPtsInClust <- c(rep(0,k))
+withinCluster <- c(rep(0,k))
+avgWithinCluster <- 0
+betweenCluster <- 0
+
+for(i in 1:length(cl))
+{
+  noOfPtsInClust[cl[i]] = noOfPtsInClust[cl[i]]+1
+  withinCluster[cl[i]] = withinCluster[cl[i]] + DTWDistance_dat(as.data.frame(m[i]), as.data.frame(means[cl[i]]),4)
+}
+
+for(i in 1:k)
+{
+  withinCluster[i] = withinCluster[i] / noOfPtsInClust[i]
+  cat("Number of pts in Cluster", i, ":", noOfPtsInClust[i], "\n")
+  avgWithinCluster <- avgWithinCluster + withinCluster[i]
+}
+
+avgWithinCluster <- avgWithinCluster/k
+
+for(i in 1:k)
+{
+  for(j in i:k)
+  {
+    betweenCluster <- betweenCluster + DTWDistance_dat(as.data.frame(means[i]), as.data.frame(means[j]),4)  
+  }
+}
+
+betweenCluster <- betweenCluster/k
+
+return(list('means' = means, 'avgWithinCluster' = avgWithinCluster, 'betweenCluster' = betweenCluster, 'clusters' = cl))
+
+}
+```
+
+```{r}
+clust <- myKmeans(li[1:20],4,3)
+str(clust)
+```
+
+```{r}
+clusters <- clust['means']
+clusters <- clusters$means
+plot.ts(as.data.frame(clusters[1])[,4], ylab = 'Clusters', col='blue', main="Close")
+lines(as.data.frame(clusters[2])[,4], col = 'red')
+lines(as.data.frame(clusters[3])[,4], col = 'green')
+lines(as.data.frame(clusters[4])[,4], col = 'yellow')
+legend('top', c("Cluster1","Cluster2","Cluster3","Cluster4"), fill=c("blue",'red','green','yellow'))
+```
+
+```{r}
+cluster_data = data.frame(stock_name=names(normalized_price[1:20]),cluster=clust['clusters'])
+cluster_data = sqldf('select t1.*, t2.Name, t2.Sector from cluster_data t1 left join SP500 t2 on t1.stock_name = t2.Symbol')
+cluster_data
+```
+

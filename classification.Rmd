@@ -1,0 +1,290 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+```{r}
+library(microbenchmark)
+library(caret)
+```
+```{r}
+mydata <- read.csv(file="eeg-eye-state_csv.csv",head=TRUE,sep=",")
+str(mydata)
+data <- split(mydata, seq(nrow(mydata)-1) %/% 50)
+data <- data[1:(length(data)-1)]
+str(data[1])
+```
+```{r}
+# Taking a small sample
+data <- data[1:200]
+```
+
+```{r}  
+set.seed(27)
+sample <- sample.int(n = length(data), size = floor(.9*length(data)), replace = F)
+split <- floor(0.9*length(data))
+train <- data[sample]
+test  <- data[-sample]
+```
+
+```{r} 
+# Univariate DTW
+DTWDistance <- function(s1, s2,w)
+{
+    DTW<-matrix(Inf, nrow = length(s1)+1, ncol = length(s2)+1)
+    w<-max(w, abs(length(s1)-length(s2)))
+    DTW[1,1] <- 0
+    for(i in 2:(length(s1)+1))
+    {
+      for(j in max(2, i-w): min(length(s2)+1, i+w))
+      {
+        dist <- (s1[i]-s2[j])**2
+        DTW[i , j] <- dist + min( DTW[i-1, j] , DTW[ i, j-1] , DTW[i-1,j-1] )
+      }
+            
+    }
+    return (sqrt(DTW[length(s1), length(s2)]))
+}
+
+```
+
+```{r DTW_dat}
+# Multivariate DTW 
+DTWDistance_dat <- function(s1, s2,w)
+{
+    DTW<-matrix(Inf, nrow = nrow(s1)+1, ncol = nrow(s2)+1)
+    w<-max(w, abs(nrow(s1)-nrow(s2)))
+    DTW[1,1] <- 0
+    for(i in 2:(nrow(s1)+1))
+    {
+      for(j in max(2, i-w): min(nrow(s2)+1, i+w))
+      {
+        dist <- 0
+        for(k in 1:ncol(s1))
+        {
+          dist <- dist + (s1[i,k]-s2[j,k])**2
+        }
+        DTW[i , j] <- dist + min( DTW[i-1, j] , DTW[ i, j-1] , DTW[i-1,j-1] )
+      }
+            
+    }
+    return (sqrt(DTW[nrow(s1), nrow(s2)]))
+}
+
+```
+
+```{r}
+# Univariate LB Keogh
+LB_Keogh <- function(s1,s2,r)
+{
+  LB_sum=0
+  for(i in seq_along(s1))
+  {
+    #print(s1[[i]])
+    if(i-r>=0)
+    {
+      v = i-r 
+    } 
+    else
+    {
+      v = 0
+    }
+    lower_bound <- min(s2[v:(i+r)])
+    upper_bound <- max(s2[v:(i+r)])
+    #print(lower_bound)
+    #print(c(i,upper_bound))
+    if(isTRUE(s1[[i]]>upper_bound))
+    {
+      LB_sum <- LB_sum+(s1[[i]]-upper_bound)**2
+    }
+    else if(isTRUE(s1[[i]]<lower_bound))
+    {
+      LB_sum <- LB_sum+(s1[[i]]-lower_bound)**2
+    }
+  }
+  return(sqrt(LB_sum))
+}
+
+```
+
+```{r}
+# Multivariate LB Keogh
+LB_Keogh_dat <- function(s1,s2,r)
+{
+  LB_sum=0
+  for(i in 1:nrow(s1))
+  {
+    #print(s1[[i]])
+    if(i-r>0)
+    {
+      v = i-r 
+    } 
+    else
+    {
+      v = 1
+    }
+    for(j in 1:ncol(s1))
+    {
+      lower_bound <- min(s2[v:(i+r),j])
+      upper_bound <- max(s2[v:(i+r),j])
+      #print(lower_bound)
+      #print(c(i,upper_bound))
+      if(isTRUE(s1[i,j]>upper_bound))
+      {
+        LB_sum <- LB_sum+(s1[i,j]-upper_bound)**2
+      }
+      else if(isTRUE(s1[i,j]<lower_bound))
+      {
+        LB_sum <- LB_sum+(s1[i,j]-lower_bound)**2
+      }  
+    }
+  }
+  return(sqrt(LB_sum))
+}
+
+```
+
+```{r}
+# Reference class taken as majority in Time Series
+OneNN <- function(train,test,w)
+{
+  ref <- vector()
+  preds <- vector()
+  for(i in test)
+  {
+    ref <- c(ref, as.numeric(names(sort(table(as.numeric(i[,ncol(i)])), decreasing = TRUE))[1]))
+    # ref <- c(ref, i[5,(ncol(i))])
+    min_dist <- Inf
+    closest_seq <- vector()
+    for(j in train)
+    {
+      if(LB_Keogh_dat(i[,1:(ncol(i)-1)],j[,1:(ncol(j)-1)],5) < min_dist)
+      {
+        dist <- DTWDistance_dat(i[,1:(ncol(i)-1)],j[,1:(ncol(j)-1)],w)
+        if(dist<min_dist)
+        {
+          min_dist <- dist
+          closest_seq <- j
+        }
+      }
+    }
+    
+    preds <- c(preds, as.numeric(names(sort(table(as.numeric(closest_seq[,ncol(closest_seq)])), decreasing = TRUE))[1]))
+    # preds <- c(preds, closest_seq[5,ncol(closest_seq)])
+  }
+  print(preds)
+  print(ref)
+  return(confusionMatrix(data=factor(preds, levels = c(1,2)), reference=factor(ref, levels = c(1,2))))
+}
+
+```
+
+```{r}
+# Reference class taken as first in Time Series
+OneNN_variant <- function(train,test,w)
+{
+  ref <- vector()
+  preds <- vector()
+  for(i in test)
+  {
+    ref <- c(ref, i[1,(ncol(i))])
+    min_dist <- Inf
+    closest_seq <- vector()
+    # print(str(as.numeric(i[1,1:(ncol(i)-1)])))
+    for(j in train)
+    {
+      if(LB_Keogh(as.numeric(i[1,1:(ncol(i)-1)]),as.numeric(j[1,1:(ncol(j)-1)]),5) < min_dist)
+      {
+        dist <- DTWDistance(as.numeric(i[1,1:(ncol(i)-1)]),as.numeric(j[1,1:(ncol(j)-1)]),w)
+        if(dist<min_dist)
+        {
+          min_dist <- dist
+          closest_seq <- j
+        }
+      }
+    }
+    preds <- c(preds, closest_seq[1,ncol(closest_seq)])
+  }
+  print(preds)
+  print(ref)
+  return(confusionMatrix(data=factor(preds, levels = c(1,2)), reference=factor(ref, levels = c(1,2))))
+}
+
+```
+
+```{r}
+# KNN implementation using DTW
+KNN <- function(train,test,w,k)
+{
+  ref <- vector()
+  preds <- vector()
+  for(i in test)
+  {
+    ref <- c(ref, as.numeric(names(sort(table(as.numeric(i[,ncol(i)])), decreasing = TRUE))[1]))
+    dist_list <- c(rep(0,length(train)))
+    x <- 1
+    for(j in train)
+    {
+      # print(str(j))
+      dist <- DTWDistance(as.numeric(i[1,1:(ncol(i)-1)]),as.numeric(j[1,1:(ncol(j)-1)]),w)
+      dist_list[x] <- dist
+      x <- x+1
+    }
+    ksorted <- train[sort.list(dist_list)]
+    maj_1 <- 0
+    maj_2 <- 0
+    for(y in 1:k)
+    {
+      seq <- ksorted[y]
+      seq <- as.data.frame(seq)
+      ref_train <- as.numeric(names(sort(table(as.numeric(seq[,ncol(seq)])), decreasing = TRUE))[1])
+      if(ref_train == 1)
+      {
+        maj_1 <- maj_1 + 1
+      }
+      else
+      {
+        maj_2 <- maj_2 + 1
+      }
+    }
+    pred <- -1
+    if(maj_1 > maj_2)
+    {
+      pred <- 1
+    }
+    else
+    {
+      pred <- 2
+    }
+    preds <- c(preds, pred)
+  }
+  print(preds)
+  print(ref)
+  return(confusionMatrix(data=factor(preds, levels = c(1,2)), reference=factor(ref, levels = c(1,2))))
+}
+
+```
+
+```{r}
+print(OneNN(train,test,4))
+```
+
+```{r}
+print(KNN(train,test,4,5))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
