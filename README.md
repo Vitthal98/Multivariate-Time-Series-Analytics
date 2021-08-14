@@ -27,7 +27,7 @@ The aim was to cluster similar companies in the S&P 500 index based on their his
 The number of clusters was set beforehand and so was the initial choice of seeds. After a reasonable number of iterations, similar time series were clustered together.
 
 #### Want to know more?
-Please read the [report](https://github.com/Vitthal98/Multivariate-Time-Series-Analytics/blob/main/FoDS_Report_%232.pdf) as it contains detailed information about the datasets used, methods implemented, results obtained and discussion.
+Please read the [project report](https://github.com/Vitthal98/Multivariate-Time-Series-Analytics/blob/main/FoDS_Report_%232.pdf) as it contains detailed information about the datasets used, methods implemented, results obtained and discussion.
 
 For any doubts don't hesitate to contact me at vitthalbhandari98@gmail.com
 
